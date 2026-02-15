@@ -1,0 +1,12 @@
+services:
+  proxy:
+    build: .
+    container_name: vllm-dynamic-proxy
+    ports:
+      - "8080:8080"
+    environment:
+      PROXY_SECRET_KEY: ${PROXY_SECRET_KEY}
+      ROUTES_CONFIG_PATH: /app/config/routes.yaml
+    volumes:
+      - ./config/routes.yaml:/app/config/routes.yaml:ro
+    restart: unless-stopped
