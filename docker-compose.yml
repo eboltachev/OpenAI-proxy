@@ -8,5 +8,5 @@ services:
       PROXY_SECRET_KEY: ${PROXY_SECRET_KEY}
       ROUTES_CONFIG_PATH: /app/config/routes.yaml
     volumes:
-      - ./config/routes.yaml:/app/config/routes.yaml:ro
+      - ./config:/app/config:ro
     restart: unless-stopped
