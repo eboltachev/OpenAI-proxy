@@ -23,6 +23,11 @@ def timeout_s() -> float:
         return 600.0
 
 
+def allow_ssl_downgrade() -> bool:
+    v = os.getenv("PROXY_ALLOW_SSL_DOWNGRADE", "0").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def join_upstream_url(base_url: str, incoming_path: str) -> str:
     """
     Нормализация:
@@ -48,6 +53,9 @@ def http_fallback_url_on_ssl_error(url: str, err: Exception) -> str | None:
 
     В таком случае возвращаем тот же URL, но с http://, чтобы сделать 1 ретрай.
     """
+    if not allow_ssl_downgrade():
+        return None
+
     parts = urlsplit(url)
     if parts.scheme != "https":
         return None
