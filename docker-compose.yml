@@ -7,7 +7,7 @@ services:
     ports:
       - "${API_PORT}:${API_PORT}"
     volumes:
-      - ./.config.yml:${API_CONFIG_PATH:-/app/.config.yml}:ro
+      - ./config:/app/config:ro
     read_only: true
     tmpfs:
       - /tmp

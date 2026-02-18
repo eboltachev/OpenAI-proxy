@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import Any
+from pathlib import Path
+from dataclasses import dataclass
 
 import yaml
 
@@ -15,7 +16,8 @@ class Upstream:
 
 
 def config_path() -> str:
-    return os.getenv("API_CONFIG_PATH", "/app/.config.yml")
+    raw_path = os.getenv("API_CONFIG_PATH", "/app/config/example.models.yml")
+    return str(Path(raw_path).resolve(strict=False))
 
 
 def load_config() -> dict[str, Upstream]:

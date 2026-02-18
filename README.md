@@ -10,7 +10,7 @@
 
 ## Configuration
 - `cp .env.example .env`
-- `cp example.config.yml .config.yml`
+- `cp .config/example.sources.yml .config/sources.yml`
 
 ## Run
 ```bash
