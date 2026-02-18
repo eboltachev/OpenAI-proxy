@@ -20,7 +20,7 @@ class _LogEvent:
 
 class AsyncActionLogger:
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[_LogEvent | None] = asyncio.Queue(maxsize=1000)
+        self._queue: asyncio.Queue[_LogEvent | None] | None = None
         self._worker_task: asyncio.Task[None] | None = None
         self._logger = logging.getLogger("openai_proxy")
         if not self._logger.handlers:
@@ -32,25 +32,34 @@ class AsyncActionLogger:
 
     async def start(self) -> None:
         if self._worker_task is None or self._worker_task.done():
-            self._worker_task = asyncio.create_task(self._worker(), name="openai-proxy-async-logger")
+            queue: asyncio.Queue[_LogEvent | None] = asyncio.Queue(maxsize=1000)
+            self._queue = queue
+            self._worker_task = asyncio.create_task(self._worker(queue), name="openai-proxy-async-logger")
 
     async def stop(self) -> None:
         if self._worker_task is None:
             return
-        await self._queue.put(None)
+        queue = self._queue
+        if queue is not None:
+            await queue.put(None)
         await self._worker_task
         self._worker_task = None
+        self._queue = None
 
     async def log(self, module: str, action: str, result: str, *, level: int = logging.INFO, **details: Any) -> None:
         event = _LogEvent(level=level, module=module, action=action, result=result, details=details)
+        queue = self._queue
+        if queue is None:
+            self._logger.log(event.level, self._format_event(event))
+            return
         try:
-            self._queue.put_nowait(event)
+            queue.put_nowait(event)
         except asyncio.QueueFull:
             self._logger.warning(self._format_event(event, dropped=True))
 
-    async def _worker(self) -> None:
+    async def _worker(self, queue: asyncio.Queue[_LogEvent | None]) -> None:
         while True:
-            event = await self._queue.get()
+            event = await queue.get()
             if event is None:
                 return
             with contextlib.suppress(Exception):
