@@ -9,7 +9,7 @@ from starlette.background import BackgroundTask
 
 from .config import Upstream
 from .errors import openai_error
-from .upstream import join_upstream_url, timeout_s, tls_verify, caps_cache
+from .upstream import join_upstream_url, timeout_s, tls_verify, caps_cache, http_fallback_url_on_ssl_error
 
 
 HOP_BY_HOP = {
@@ -120,8 +120,26 @@ async def proxy_http(
         await client.aclose()
         return openai_error(504, f"Upstream timeout: {upstream.base_url}", err_type="timeout_error")  # type: ignore[return-value]
     except httpx.RequestError as e:
-        await client.aclose()
-        return openai_error(502, f"Upstream request error: {e!s}", err_type="api_error")  # type: ignore[return-value]
+        fallback_url = http_fallback_url_on_ssl_error(url, e)
+        if fallback_url is None:
+            await client.aclose()
+            return openai_error(502, f"Upstream request error: {e!s}", err_type="api_error")  # type: ignore[return-value]
+
+        fallback_req = client.build_request(
+            method=request.method,
+            url=fallback_url,
+            headers=headers,
+            content=body_stream if request.method in ("POST", "PUT", "PATCH") else None,
+        )
+
+        try:
+            r = await client.send(fallback_req, stream=True)
+        except httpx.TimeoutException:
+            await client.aclose()
+            return openai_error(504, f"Upstream timeout: {upstream.base_url}", err_type="timeout_error")  # type: ignore[return-value]
+        except httpx.RequestError:
+            await client.aclose()
+            return openai_error(502, f"Upstream request error: {e!s}", err_type="api_error")  # type: ignore[return-value]
 
     if r.status_code == 404:
         await r.aclose()

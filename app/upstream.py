@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 from typing import Any
 
 import httpx
@@ -38,6 +39,30 @@ def join_upstream_url(base_url: str, incoming_path: str) -> str:
         path = path[len("/v1"):]  # оставляем ведущий "/..."
 
     return base + path
+
+
+def http_fallback_url_on_ssl_error(url: str, err: Exception) -> str | None:
+    """
+    Если upstream сконфигурирован как https://, но реально слушает plain HTTP,
+    httpx падает с SSL-ошибкой (например `record layer failure`).
+
+    В таком случае возвращаем тот же URL, но с http://, чтобы сделать 1 ретрай.
+    """
+    parts = urlsplit(url)
+    if parts.scheme != "https":
+        return None
+
+    msg = str(err).lower()
+    ssl_markers = (
+        "record layer failure",
+        "wrong version number",
+        "tlsv1 alert",
+        "ssl",
+    )
+    if not any(marker in msg for marker in ssl_markers):
+        return None
+
+    return urlunsplit(("http", parts.netloc, parts.path, parts.query, parts.fragment))
 
 
 @dataclass
@@ -82,4 +107,3 @@ class CapsCache:
 
 
 caps_cache = CapsCache()
-
