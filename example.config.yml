@@ -1,0 +1,20 @@
+models:
+  - model: openai/whisper-large-v3
+    base_url: http://localhost:11430
+    api_key: "sk-111"
+
+  - model: tinyllama:1.1b
+    base_url: https://localhost:11434
+    api_key: "ollama"
+
+  - model: openai/gpt-oss-120b
+    base_url: http://localhost:11435
+    api_key: "sk-111"
+
+  - model: nomic-ai/nomic-embed-text-v2-moe
+    base_url: http://localhost:11436
+    api_key: "sk-111"
+
+  - model: BAAI/bge-reranker-v2-m3
+    base_url: http://localhost:11437
+    api_key: "sk-111"
