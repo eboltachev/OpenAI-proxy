@@ -5,6 +5,7 @@ from typing import AsyncIterator
 import httpx
 from fastapi import Request
 from fastapi.responses import StreamingResponse, ORJSONResponse
+from starlette.background import BackgroundTask
 
 from .config import Upstream
 from .errors import openai_error
@@ -105,39 +106,45 @@ async def proxy_http(
 
     headers = _filtered_headers(request, upstream)
 
-    async with httpx.AsyncClient(timeout=timeout_s(), verify=tls_verify()) as client:
-        try:
-            async with client.stream(
-                method=request.method,
-                url=url,
-                headers=headers,
-                content=body_stream if request.method in ("POST", "PUT", "PATCH") else None,
-            ) as r:
-                # если upstream явно говорит "не найдено" — вернём OpenAI-style ошибку
-                if r.status_code == 404:
-                    return openai_error(404, f"Upstream returned 404 for {incoming_path}", code="upstream_404")  # type: ignore[return-value]
+    client = httpx.AsyncClient(timeout=timeout_s(), verify=tls_verify())
+    req = client.build_request(
+        method=request.method,
+        url=url,
+        headers=headers,
+        content=body_stream if request.method in ("POST", "PUT", "PATCH") else None,
+    )
 
-                # копируем заголовки ответа (без hop-by-hop)
-                resp_headers = {}
-                for k, v in r.headers.items():
-                    if k.lower() in HOP_BY_HOP:
-                        continue
-                    resp_headers[k] = v
+    try:
+        r = await client.send(req, stream=True)
+    except httpx.TimeoutException:
+        await client.aclose()
+        return openai_error(504, f"Upstream timeout: {upstream.base_url}", err_type="timeout_error")  # type: ignore[return-value]
+    except httpx.RequestError as e:
+        await client.aclose()
+        return openai_error(502, f"Upstream request error: {e!s}", err_type="api_error")  # type: ignore[return-value]
 
-                resp_headers["X-Proxy-Upstream"] = upstream.base_url
+    if r.status_code == 404:
+        await r.aclose()
+        await client.aclose()
+        return openai_error(404, f"Upstream returned 404 for {incoming_path}", code="upstream_404")  # type: ignore[return-value]
 
-                async def iter_resp():
-                    async for chunk in r.aiter_raw():
-                        yield chunk
+    # копируем заголовки ответа (без hop-by-hop)
+    resp_headers = {}
+    for k, v in r.headers.items():
+        if k.lower() in HOP_BY_HOP:
+            continue
+        resp_headers[k] = v
 
-                return StreamingResponse(
-                    iter_resp(),
-                    status_code=r.status_code,
-                    headers=resp_headers,
-                    media_type=r.headers.get("content-type"),
-                )
-        except httpx.TimeoutException:
-            return openai_error(504, f"Upstream timeout: {upstream.base_url}", err_type="timeout_error")  # type: ignore[return-value]
-        except httpx.RequestError as e:
-            return openai_error(502, f"Upstream request error: {e!s}", err_type="api_error")  # type: ignore[return-value]
+    resp_headers["X-Proxy-Upstream"] = upstream.base_url
 
+    async def close_upstream() -> None:
+        await r.aclose()
+        await client.aclose()
+
+    return StreamingResponse(
+        r.aiter_raw(),
+        status_code=r.status_code,
+        headers=resp_headers,
+        media_type=r.headers.get("content-type"),
+        background=BackgroundTask(close_upstream),
+    )
