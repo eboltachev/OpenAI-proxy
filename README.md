@@ -1,6 +1,6 @@
-# vLLM / Ollama / DeepInfra OpenAI Proxy
+# vLLM / Ollama / Other OpenAI Proxy
 
-## Что это
+## Description
 Прокси, который:
 - агрегирует модели из YAML в `GET /v1/models`
 - проверяет Bearer token на вход
@@ -8,12 +8,12 @@
 - поддерживает streaming request/response и большие multipart (audio/*)
 - лимитирует размер body (413)
 
-## Быстрый старт
-1) Скопируй примеры:
+## Configuration
 - `cp .env.example .env`
-- `cp config/models.example.yml config/models.yml`
+- `cp example.config.yml .config.yml`
 
-2) Подними:
+## Run
 ```bash
 docker compose up --build -d
+```
 

@@ -17,6 +17,4 @@ def openai_error(status_code: int, message: str, err_type: str = "invalid_reques
 
 
 def raise_openai(status_code: int, message: str, err_type: str = "invalid_request_error", code: str | None = None):
-    # Для случаев, где удобнее исключение
     raise HTTPException(status_code=status_code, detail={"error": {"message": message, "type": err_type, "code": code}})
-

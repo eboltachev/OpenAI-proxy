@@ -22,10 +22,11 @@ app = FastAPI(
     version="0.1.0",
     description="OpenAI-compatible proxy router for vLLM / Ollama / other endpoints.",
 )
-
-# middleware: сначала лимит, потом auth
 app.add_middleware(BodySizeLimitMiddleware)
-app.add_middleware(BearerAuthMiddleware, exempt_paths=("/docs", "/openapi.json", "/health", "/v1/models"))
+app.add_middleware(
+    BearerAuthMiddleware,
+    exempt_paths=("/docs", "/openapi.json", "/health", "/v1/models")
+)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -41,7 +42,6 @@ async def health():
     by_upstream: dict[str, list[str]] = defaultdict(list)
     for m, u in cfg.items():
         by_upstream[u.base_url].append(m)
-
     results = {}
     overall_ok = True
 
@@ -51,7 +51,6 @@ async def health():
             ok = False
             err = None
 
-            # 1) пробуем /health
             url_health = join_upstream_url(base_url, "/health")
             try:
                 r = await client.get(url_health)
@@ -61,7 +60,6 @@ async def health():
             except Exception as e:
                 err = f"/health error: {e!s}"
 
-            # 2) если не ок — пробуем /v1/models (OpenAI-style)
             if not ok:
                 url_models = join_upstream_url(base_url, "/v1/models")
                 try:
@@ -112,20 +110,14 @@ async def realtime(ws: WebSocket):
 
 async def _route_and_proxy(request: Request):
     cfg = load_config()
-
     try:
         model, body_stream = await sniff_model_and_stream(request)
     except ValueError as e:
         return openai_error(400, str(e), code="model_not_found")
-
     upstream = cfg.get(model)
     if not upstream:
         return openai_error(400, f"Unknown model: {model}", code="unknown_model")
-
     return await proxy_http(request, upstream, body_stream)
-
-
-# --- vLLM/OpenAI ключевые роуты (чтобы красиво отображались в /docs) ---
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -151,7 +143,6 @@ async def audio_transcriptions(request: Request):
 async def audio_translations(request: Request):
     return await _route_and_proxy(request)
 
-# vLLM custom endpoints :contentReference[oaicite:4]{index=4}
 @app.post("/tokenize")
 async def tokenize(request: Request):
     return await _route_and_proxy(request)
@@ -184,10 +175,6 @@ async def rerank_v1(request: Request):
 async def rerank_v2(request: Request):
     return await _route_and_proxy(request)
 
-
-# Catch-all: если в vLLM появятся новые роуты — прокси их тоже пробросит
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 async def catch_all(request: Request, full_path: str):
-    # /health и /v1/models уже определены выше
     return await _route_and_proxy(request)
-
