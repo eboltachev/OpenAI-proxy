@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from .config import Upstream
+from .async_logger import async_logger
 
 
 @dataclass
@@ -40,8 +41,8 @@ class CapsCache:
                     j: dict[str, Any] = r.json()
                     paths = set((j.get("paths") or {}).keys())
                     return UpstreamCaps(paths=paths)
-        except Exception:
-            pass
+        except Exception as e:
+            await async_logger.log("app.upstream", "discover_caps", "error", upstream=u.base_url, error=str(e))
         return UpstreamCaps(paths=None)
 
 def tls_verify() -> bool:

@@ -8,6 +8,7 @@ import websockets
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .config import Upstream
+from .async_logger import async_logger
 from .upstream import join_upstream_url, tls_verify
 
 
@@ -17,10 +18,12 @@ async def proxy_realtime_ws(ws: WebSocket, upstream: Upstream):
         auth = ws.headers.get("authorization", "")
         ok = auth.startswith("Bearer ") and auth.split(" ", 1)[1].strip() == token
         if not ok:
+            await async_logger.log("app.proxy_ws", "ws_auth", "unauthorized")
             await ws.close(code=4401)
             return
     model = ws.query_params.get("model")
     if not model:
+        await async_logger.log("app.proxy_ws", "ws_connect", "missing_model")
         await ws.close(code=4400)
         return
     http_url = join_upstream_url(upstream.base_url, "/v1/realtime")
@@ -57,8 +60,10 @@ async def proxy_realtime_ws(ws: WebSocket, upstream: Upstream):
                         await ws.send_text(str(msg))
             await asyncio.gather(c2u(), u2c())
     except WebSocketDisconnect:
+        await async_logger.log("app.proxy_ws", "ws_proxy", "client_disconnected", upstream=upstream.base_url)
         return
-    except Exception:
+    except Exception as e:
+        await async_logger.log("app.proxy_ws", "ws_proxy", "proxy_error", upstream=upstream.base_url, error=str(e))
         await ws.close(code=1011)
 
 def _proxy_token() -> str:

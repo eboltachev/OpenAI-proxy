@@ -6,6 +6,8 @@ from typing import AsyncIterator, Tuple
 
 from fastapi import Request
 
+from .async_logger import async_logger
+
 _JSON_MODEL_RE = re.compile(rb'"model"\s*:\s*"([^"\\]+)"')
 _MP_MODEL_RE = re.compile(rb'name="model"\r\n\r\n([^\r\n]+)')
 
@@ -40,6 +42,7 @@ async def sniff_model_and_stream(request: Request) -> Tuple[str, AsyncIterator[b
             if len(prefix) >= limit:
                 break
     if not model:
+        await async_logger.log("app.shiff", "sniff_model", "not_found", content_type=content_type, limit=limit)
         raise ValueError("Model is not found in request body (sniff limit exceeded or missing).")
     async def body_iter():
         for c in seen_chunks:
