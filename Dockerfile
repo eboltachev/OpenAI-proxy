@@ -1,7 +1,9 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_CACHE_DIR=/tmp/uv-cache \
+    XDG_CACHE_HOME=/tmp/.cache
 
 WORKDIR /app
 
@@ -20,4 +22,4 @@ RUN chown -R app:app /app
 
 USER app
 
-CMD uv run uvicorn app.main:app --log-level=info --host=${API_HOST} --port=${API_PORT}
+CMD /app/.venv/bin/uvicorn app.main:app --log-level=info --host=${API_HOST} --port=${API_PORT}
