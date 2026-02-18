@@ -4,7 +4,7 @@ models:
     api_key: "sk-111"
 
   - model: tinyllama:1.1b
-    base_url: https://localhost:11434
+    base_url: http://localhost:11434
     api_key: "ollama"
 
   - model: openai/gpt-oss-120b
