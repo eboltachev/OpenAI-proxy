@@ -9,6 +9,7 @@ from starlette.background import BackgroundTask
 
 from .config import Upstream
 from .errors import openai_error
+from .async_logger import async_logger
 from .upstream import (
     join_upstream_url, timeout_s, tls_verify, 
     caps_cache, http_fallback_url_on_ssl_error
@@ -70,9 +71,11 @@ async def proxy_http(
     try:
         r = await client.send(req, stream=True)
     except httpx.TimeoutException:
+        await async_logger.log("app.proxy_http", "forward_request", "timeout", upstream=upstream.base_url, path=incoming_path)
         await client.aclose()
         return openai_error(504, f"Upstream timeout: {upstream.base_url}", err_type="timeout_error")  # type: ignore[return-value]
     except httpx.RequestError as e:
+        await async_logger.log("app.proxy_http", "forward_request", "request_error", upstream=upstream.base_url, path=incoming_path, error=str(e))
         fallback_url = http_fallback_url_on_ssl_error(url, e)
         if fallback_url is None:
             await client.aclose()
@@ -86,12 +89,15 @@ async def proxy_http(
         try:
             r = await client.send(fallback_req, stream=True)
         except httpx.TimeoutException:
+            await async_logger.log("app.proxy_http", "forward_request_fallback", "timeout", upstream=upstream.base_url, path=incoming_path)
             await client.aclose()
             return openai_error(504, f"Upstream timeout: {upstream.base_url}", err_type="timeout_error")  # type: ignore[return-value]
-        except httpx.RequestError:
+        except httpx.RequestError as e2:
+            await async_logger.log("app.proxy_http", "forward_request_fallback", "request_error", upstream=upstream.base_url, path=incoming_path, error=str(e2))
             await client.aclose()
             return openai_error(502, f"Upstream request error: {e!s}", err_type="api_error")  # type: ignore[return-value]
     if r.status_code == 404:
+        await async_logger.log("app.proxy_http", "forward_request", "upstream_404", upstream=upstream.base_url, path=incoming_path)
         await r.aclose()
         await client.aclose()
         return openai_error(404, f"Upstream returned 404 for {incoming_path}", code="upstream_404")  # type: ignore[return-value]

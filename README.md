@@ -17,3 +17,9 @@
 docker compose up --build -d
 ```
 
+
+
+## Logging
+- Асинхронное логирование в stdout включено по умолчанию.
+- Формат сообщения: `datetime module action result ...` (с доп. полями контекста).
+- Уровень логирования задаётся через `API_LOG_LEVEL` (например, `INFO`, `WARNING`, `ERROR`).

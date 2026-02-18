@@ -13,6 +13,7 @@ from .errors import openai_error
 from .middleware import BodySizeLimitMiddleware, BearerAuthMiddleware
 from .shiff import sniff_model_and_stream
 from .proxy_http import proxy_http
+from .async_logger import async_logger
 from .proxy_ws import proxy_realtime_ws
 from .upstream import join_upstream_url, timeout_s, tls_verify
 
@@ -34,6 +35,16 @@ def _env_int(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except Exception:
         return default
+
+
+@app.on_event("startup")
+async def _startup_logger() -> None:
+    await async_logger.start()
+
+
+@app.on_event("shutdown")
+async def _shutdown_logger() -> None:
+    await async_logger.stop()
 
 
 @app.get("/health")
@@ -59,6 +70,7 @@ async def health():
                     err = f"/health -> {r.status_code}"
             except Exception as e:
                 err = f"/health error: {e!s}"
+                await async_logger.log("app.main", "health_check", "error", base_url=base_url, endpoint="/health", error=str(e))
 
             if not ok:
                 url_models = join_upstream_url(base_url, "/v1/models")
@@ -69,6 +81,7 @@ async def health():
                         err = (err or "") + f"; /v1/models -> {r.status_code}"
                 except Exception as e:
                     err = (err or "") + f"; /v1/models error: {e!s}"
+                    await async_logger.log("app.main", "health_check", "error", base_url=base_url, endpoint="/v1/models", error=str(e))
 
             dt_ms = int((time.time() - t0) * 1000)
             results[base_url] = {
@@ -113,10 +126,13 @@ async def _route_and_proxy(request: Request):
     try:
         model, body_stream = await sniff_model_and_stream(request)
     except ValueError as e:
+        await async_logger.log("app.main", "route_request", "model_not_found", error=str(e), path=request.url.path)
         return openai_error(400, str(e), code="model_not_found")
     upstream = cfg.get(model)
     if not upstream:
+        await async_logger.log("app.main", "route_request", "unknown_model", model=model, path=request.url.path)
         return openai_error(400, f"Unknown model: {model}", code="unknown_model")
+    await async_logger.log("app.main", "route_request", "upstream_selected", model=model, upstream=upstream.base_url, path=request.url.path)
     return await proxy_http(request, upstream, body_stream)
 
 @app.post("/v1/chat/completions")

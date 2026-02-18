@@ -5,6 +5,8 @@ from typing import Callable, Iterable
 
 from fastapi.responses import ORJSONResponse
 
+from .async_logger import async_logger
+
 
 class BodySizeLimitMiddleware:
     def __init__(self, app):
@@ -23,8 +25,8 @@ class BodySizeLimitMiddleware:
                         content={"error": {"message": "Payload Too Large", "type": "request_too_large"}},
                     )(scope, receive, send)
                     return
-            except Exception:
-                pass
+            except Exception as e:
+                await async_logger.log("app.middleware", "parse_content_length", "invalid_header", error=str(e))
         seen = 0
         async def limited_receive():
             nonlocal seen
@@ -38,6 +40,7 @@ class BodySizeLimitMiddleware:
         try:
             await self.app(scope, limited_receive, send)
         except _PayloadTooLarge:
+            await async_logger.log("app.middleware", "body_size_limit", "payload_too_large", max_bytes=self.max_bytes)
             await ORJSONResponse(
                 status_code=413,
                 content={"error": {"message": "Payload Too Large", "type": "request_too_large"}},
