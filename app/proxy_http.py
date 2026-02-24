@@ -14,6 +14,7 @@ from .upstream import (
     join_upstream_url, timeout_s, tls_verify, 
     caps_cache, http_fallback_url_on_ssl_error
 )
+from .stream_json import write_response_raw_json, RedisStreamClient
 
 
 HOP_BY_HOP = {
@@ -112,13 +113,33 @@ async def proxy_http(
         await r.aclose()
         await client.aclose()
 
+    stream_iter: AsyncIterator[bytes] = r.aiter_raw()
+    if incoming_path == "/v1/responses" and request.query_params.get("stream") == "true":
+        redis_client = getattr(request.app.state, "redis_stream_client", None)
+        stream_key = request.headers.get("x-stream-key")
+        if redis_client is not None and stream_key:
+            stream_iter = _mirror_sse_chunks_to_redis(stream_iter, redis_client, stream_key)
+
     return StreamingResponse(
-        r.aiter_raw(),
+        stream_iter,
         status_code=r.status_code,
         headers=resp_headers,
         media_type=r.headers.get("content-type"),
         background=BackgroundTask(close_upstream),
     )
+
+
+async def _mirror_sse_chunks_to_redis(
+    upstream_iter: AsyncIterator[bytes],
+    redis: RedisStreamClient,
+    stream_key: str,
+) -> AsyncIterator[bytes]:
+    async for chunk in upstream_iter:
+        payload = {"chunk": chunk.decode("utf-8", errors="replace")}
+        await write_response_raw_json(redis, stream_key, payload)
+        yield chunk
+
+    await write_response_raw_json(redis, stream_key, {"done": True}, done=True)
 
 
 async def ensure_route_supported(u: Upstream, incoming_path: str) -> ORJSONResponse | None:

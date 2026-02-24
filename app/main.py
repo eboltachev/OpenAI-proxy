@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
+import json
 import time
 from collections import defaultdict
 
 import httpx
 from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import ORJSONResponse, StreamingResponse
 
 from .config import load_config, Upstream
 from .errors import openai_error
@@ -16,6 +17,7 @@ from .proxy_http import proxy_http
 from .async_logger import async_logger
 from .proxy_ws import proxy_realtime_ws
 from .upstream import join_upstream_url, timeout_s, tls_verify
+from .stream_json import iter_stream_json
 
 
 app = FastAPI(
@@ -190,6 +192,20 @@ async def rerank_v1(request: Request):
 @app.post("/v2/rerank")
 async def rerank_v2(request: Request):
     return await _route_and_proxy(request)
+
+
+
+@app.get("/internal/streams/{stream_key}")
+async def stream_from_redis(stream_key: str):
+    redis_client = getattr(app.state, "redis_stream_client", None)
+    if redis_client is None:
+        return openai_error(503, "Redis stream client is not configured", code="redis_not_configured")
+
+    async def sse_iter():
+        async for item in iter_stream_json(redis_client, stream_key):
+            yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n".encode("utf-8")
+
+    return StreamingResponse(sse_iter(), media_type="text/event-stream")
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 async def catch_all(request: Request, full_path: str):
