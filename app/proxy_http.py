@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 from typing import AsyncIterator
 
 import httpx
@@ -134,12 +135,47 @@ async def _mirror_sse_chunks_to_redis(
     redis: RedisStreamClient,
     stream_key: str,
 ) -> AsyncIterator[bytes]:
+    decoder = codecs.getincrementaldecoder("utf-8")()
+
     async for chunk in upstream_iter:
-        payload = {"chunk": chunk.decode("utf-8", errors="replace")}
-        await write_response_raw_json(redis, stream_key, payload)
+        decoded = decoder.decode(chunk, final=False)
+        if decoded:
+            payload = {"chunk": decoded}
+            try:
+                await write_response_raw_json(redis, stream_key, payload)
+            except Exception as e:
+                await async_logger.log(
+                    "app.proxy_http",
+                    "mirror_sse_chunks_to_redis",
+                    "redis_write_error",
+                    stream_key=stream_key,
+                    error=str(e),
+                )
         yield chunk
 
-    await write_response_raw_json(redis, stream_key, {"done": True}, done=True)
+    tail = decoder.decode(b"", final=True)
+    if tail:
+        try:
+            await write_response_raw_json(redis, stream_key, {"chunk": tail})
+        except Exception as e:
+            await async_logger.log(
+                "app.proxy_http",
+                "mirror_sse_chunks_to_redis",
+                "redis_write_error",
+                stream_key=stream_key,
+                error=str(e),
+            )
+
+    try:
+        await write_response_raw_json(redis, stream_key, {"done": True}, done=True)
+    except Exception as e:
+        await async_logger.log(
+            "app.proxy_http",
+            "mirror_sse_chunks_to_redis",
+            "redis_write_error",
+            stream_key=stream_key,
+            error=str(e),
+        )
 
 
 async def ensure_route_supported(u: Upstream, incoming_path: str) -> ORJSONResponse | None:
