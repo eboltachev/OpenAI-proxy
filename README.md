@@ -3,21 +3,37 @@
 ## Description
 Прокси, который:
 - агрегирует модели из YAML в `GET /v1/models`
-- проверяет Bearer token на вход
-- роутит любой запрос по `model` на нужный upstream
+- проверяет Bearer token на вход (HTTP и WebSocket)
+- роутит запросы по `model` на нужный upstream
 - поддерживает streaming request/response и большие multipart (audio/*)
 - лимитирует размер body (413)
 
 ## Configuration
-- `cp .env.example .env`
-- `cp .config/example.sources.yml .config/sources.yml`
+- `cp example.env .env`
+- `cp config/example.models.yml config/models.yml`
+- при необходимости укажите `API_CONFIG_PATH` (по умолчанию читается `/app/config/example.models.yml`)
 
 ## Run
 ```bash
 docker compose up --build -d
 ```
 
+## Tests
+```bash
+make test
+```
 
+## Quality checks
+```bash
+make check
+```
+
+
+## Security profile
+- `API_AUTH_REQUIRED=1` (по умолчанию): требует непустой `API_BEARER_TOKEN`.
+- `API_ALLOW_SSL_DOWNGRADE=0` по умолчанию; при включении используйте `API_SSL_DOWNGRADE_ALLOWLIST` (CSV хостов).
+- `API_PUBLIC_HEALTH_DETAILS=0` и `API_PUBLIC_MODELS=0` по умолчанию для минимизации раскрытия данных.
+- Для приватного доступа доступны `GET /internal/health` и `GET /internal/models` (под Bearer auth).
 
 ## Logging
 - Асинхронное логирование в stdout включено по умолчанию.

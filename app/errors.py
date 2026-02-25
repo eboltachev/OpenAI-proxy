@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import JSONResponse
 
 
 def openai_error(status_code: int, message: str, err_type: str = "invalid_request_error", code: str | None = None):
@@ -13,7 +13,7 @@ def openai_error(status_code: int, message: str, err_type: str = "invalid_reques
             "code": code,
         }
     }
-    return ORJSONResponse(status_code=status_code, content=payload)
+    return JSONResponse(status_code=status_code, content=payload)
 
 
 def raise_openai(status_code: int, message: str, err_type: str = "invalid_request_error", code: str | None = None):
