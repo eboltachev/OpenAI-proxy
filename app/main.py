@@ -43,7 +43,7 @@ app = FastAPI(
 )
 app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(RateLimitMiddleware)
-app.add_middleware(BearerAuthMiddleware, exempt_paths=("/docs", "/openapi.json", "/health", "/v1/models"))
+app.add_middleware(BearerAuthMiddleware, exempt_paths=("/docs", "/openapi.json", "/health"))
 
 app.include_router(public_router)
 app.include_router(realtime_router)
