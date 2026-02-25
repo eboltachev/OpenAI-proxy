@@ -32,7 +32,7 @@ make check
 ## Security profile
 - `API_AUTH_REQUIRED=1` (по умолчанию): требует непустой `API_BEARER_TOKEN`.
 - `API_ALLOW_SSL_DOWNGRADE=0` по умолчанию; при включении используйте `API_SSL_DOWNGRADE_ALLOWLIST` (CSV хостов).
-- `API_PUBLIC_HEALTH_DETAILS=0` и `API_PUBLIC_MODELS=0` по умолчанию для минимизации раскрытия данных.
+- `API_PUBLIC_HEALTH_DETAILS=0` по умолчанию для минимизации раскрытия данных; `API_PUBLIC_MODELS=1` по умолчанию для совместимости OpenAI SDK (`client.models.list()`).
 - Для приватного доступа доступны `GET /internal/health` и `GET /internal/models` (под Bearer auth).
 
 ## Logging

@@ -15,6 +15,7 @@ PROXY_PATHS = [
     "/v1/completions",
     "/v1/embeddings",
     "/v1/responses",
+    "/v1/images/generations",
     "/v1/audio/transcriptions",
     "/v1/audio/translations",
     "/tokenize",
