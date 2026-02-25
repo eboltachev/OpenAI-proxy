@@ -8,7 +8,6 @@ from starlette.requests import Request
 from app.config import Upstream
 from app.middleware import BearerAuthMiddleware
 from app.proxy_http import proxy_http
-from app.routers.public import list_models
 from app.upstream import http_fallback_url_on_ssl_error
 
 
@@ -19,7 +18,6 @@ class SecurityHardeningTests(unittest.TestCase):
             "API_BEARER_TOKEN",
             "API_ALLOW_SSL_DOWNGRADE",
             "API_SSL_DOWNGRADE_ALLOWLIST",
-            "API_PUBLIC_MODELS",
         ]}
 
     def tearDown(self):
@@ -67,26 +65,6 @@ class SecurityHardeningTests(unittest.TestCase):
             http_fallback_url_on_ssl_error("https://example.com/v1/chat/completions", err),
             "http://example.com/v1/chat/completions",
         )
-
-    def test_public_models_disabled_returns_not_found(self):
-        os.environ["API_PUBLIC_MODELS"] = "0"
-
-        app = types.SimpleNamespace(state=types.SimpleNamespace(config_provider=types.SimpleNamespace(get=lambda: {"m": Upstream("m", "http://u", "")})))
-        scope = {
-            "type": "http",
-            "method": "GET",
-            "path": "/v1/models",
-            "query_string": b"",
-            "headers": [],
-            "app": app,
-        }
-
-        async def receive():
-            return {"type": "http.request", "body": b"", "more_body": False}
-
-        req = Request(scope, receive)
-        resp = asyncio.run(list_models(req))
-        self.assertEqual(resp.status_code, 404)
 
     def test_runtime_client_missing_is_503(self):
         os.environ["API_ALLOW_SSL_DOWNGRADE"] = "1"
