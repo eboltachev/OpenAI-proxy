@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 import codecs
+import os
 from typing import AsyncIterator
 
 import httpx
 from fastapi import Request
-from fastapi.responses import StreamingResponse, ORJSONResponse
+from fastapi.responses import StreamingResponse, Response
 from starlette.background import BackgroundTask
 
 from .config import Upstream
 from .errors import openai_error
 from .async_logger import async_logger
-from .upstream import (
-    join_upstream_url, timeout_s, tls_verify, 
-    caps_cache, http_fallback_url_on_ssl_error
-)
+from .upstream import join_upstream_url, caps_cache, http_fallback_url_on_ssl_error
 from .stream_json import write_response_raw_json, RedisStreamClient
 
 
@@ -56,53 +54,93 @@ async def proxy_http(
 ) -> StreamingResponse:
     incoming_path = request.url.path
     qs = request.url.query
-    pre = await ensure_route_supported(upstream, incoming_path)
+
+    client = getattr(request.app.state, "http_client", None)
+    caps_client = getattr(request.app.state, "caps_client", None)
+    if client is None or caps_client is None:
+        return openai_error(503, "Runtime clients are not initialized", code="runtime_dependency_missing")  # type: ignore[return-value]
+
+    pre = await ensure_route_supported(upstream, incoming_path, caps_client)
     if pre is not None:
         return pre
+
     url = join_upstream_url(upstream.base_url, incoming_path)
     if qs:
         url = f"{url}?{qs}"
     headers = _filtered_headers(request, upstream)
-    client = httpx.AsyncClient(timeout=timeout_s(), verify=tls_verify())
+
+    has_body = request.method in ("POST", "PUT", "PATCH")
+    fallback_reason = "no_body"
+    buffered_body: bytes | None = None
+    if has_body:
+        can_buffer, fallback_reason = _fallback_bufferability_reason(request)
+        if can_buffer:
+            buffered_body = await _read_body_with_limit(body_stream, fallback_buffer_bytes())
+            if buffered_body is None:
+                fallback_reason = "read_over_limit"
+
     req = client.build_request(
         method=request.method,
         url=url,
         headers=headers,
-        content=body_stream if request.method in ("POST", "PUT", "PATCH") else None,
+        content=buffered_body if buffered_body is not None else (body_stream if has_body else None),
     )
     try:
         r = await client.send(req, stream=True)
     except httpx.TimeoutException:
         await async_logger.log("app.proxy_http", "forward_request", "timeout", upstream=upstream.base_url, path=incoming_path)
-        await client.aclose()
         return openai_error(504, f"Upstream timeout: {upstream.base_url}", err_type="timeout_error")  # type: ignore[return-value]
     except httpx.RequestError as e:
         await async_logger.log("app.proxy_http", "forward_request", "request_error", upstream=upstream.base_url, path=incoming_path, error=str(e))
         fallback_url = http_fallback_url_on_ssl_error(url, e)
         if fallback_url is None:
-            await client.aclose()
             return openai_error(502, f"Upstream request error: {e!s}", err_type="api_error")  # type: ignore[return-value]
+
+        fallback_content = buffered_body
+        if not _can_retry_with_fallback(request.method, has_body, fallback_content):
+            await async_logger.log(
+                "app.proxy_http",
+                "fallback_decision",
+                "deny",
+                path=incoming_path,
+                method=request.method,
+                reason=fallback_reason,
+            )
+            return openai_error(
+                502,
+                "Unsafe SSL downgrade retry for non-idempotent or non-buffered request body",
+                err_type="api_error",
+                code="unsafe_ssl_downgrade_retry",
+            )  # type: ignore[return-value]
+
+        await async_logger.log(
+            "app.proxy_http",
+            "fallback_decision",
+            "allow",
+            path=incoming_path,
+            method=request.method,
+            reason="idempotent_or_buffered",
+        )
         fallback_req = client.build_request(
             method=request.method,
             url=fallback_url,
             headers=headers,
-            content=body_stream if request.method in ("POST", "PUT", "PATCH") else None,
+            content=fallback_content,
         )
         try:
             r = await client.send(fallback_req, stream=True)
         except httpx.TimeoutException:
             await async_logger.log("app.proxy_http", "forward_request_fallback", "timeout", upstream=upstream.base_url, path=incoming_path)
-            await client.aclose()
             return openai_error(504, f"Upstream timeout: {upstream.base_url}", err_type="timeout_error")  # type: ignore[return-value]
         except httpx.RequestError as e2:
             await async_logger.log("app.proxy_http", "forward_request_fallback", "request_error", upstream=upstream.base_url, path=incoming_path, error=str(e2))
-            await client.aclose()
             return openai_error(502, f"Upstream request error: {e!s}", err_type="api_error")  # type: ignore[return-value]
+
     if r.status_code == 404:
         await async_logger.log("app.proxy_http", "forward_request", "upstream_404", upstream=upstream.base_url, path=incoming_path)
         await r.aclose()
-        await client.aclose()
         return openai_error(404, f"Upstream returned 404 for {incoming_path}", code="upstream_404")  # type: ignore[return-value]
+
     resp_headers = {}
     for k, v in r.headers.items():
         if k.lower() in HOP_BY_HOP:
@@ -112,7 +150,6 @@ async def proxy_http(
 
     async def close_upstream() -> None:
         await r.aclose()
-        await client.aclose()
 
     stream_iter: AsyncIterator[bytes] = r.aiter_raw()
     if incoming_path == "/v1/responses" and request.query_params.get("stream") == "true":
@@ -128,6 +165,45 @@ async def proxy_http(
         media_type=r.headers.get("content-type"),
         background=BackgroundTask(close_upstream),
     )
+
+
+def fallback_buffer_bytes() -> int:
+    try:
+        return int(os.getenv("API_FALLBACK_BUFFER_BYTES", str(256 * 1024)))
+    except Exception:
+        return 256 * 1024
+
+
+def _fallback_bufferability_reason(request: Request) -> tuple[bool, str]:
+    if request.method not in ("POST", "PUT", "PATCH"):
+        return False, "method_not_bufferable"
+    raw_len = request.headers.get("content-length")
+    if not raw_len:
+        return False, "content_length_missing"
+    try:
+        length = int(raw_len)
+    except Exception:
+        return False, "content_length_invalid"
+    if length < 0:
+        return False, "content_length_negative"
+    if length > fallback_buffer_bytes():
+        return False, "content_length_over_limit"
+    return True, "ok"
+
+
+async def _read_body_with_limit(body_stream: AsyncIterator[bytes], limit: int) -> bytes | None:
+    out = bytearray()
+    async for chunk in body_stream:
+        out.extend(chunk)
+        if len(out) > limit:
+            return None
+    return bytes(out)
+
+
+def _can_retry_with_fallback(method: str, has_body: bool, buffered_body: bytes | None) -> bool:
+    if not has_body:
+        return method.upper() in {"GET", "HEAD", "OPTIONS", "DELETE"}
+    return buffered_body is not None
 
 
 async def _mirror_sse_chunks_to_redis(
@@ -178,8 +254,10 @@ async def _mirror_sse_chunks_to_redis(
         )
 
 
-async def ensure_route_supported(u: Upstream, incoming_path: str) -> ORJSONResponse | None:
-    caps = await caps_cache.get(u)
+async def ensure_route_supported(u: Upstream, incoming_path: str, client: httpx.AsyncClient | None = None) -> Response | None:
+    if client is None:
+        return openai_error(503, "Caps client is not initialized", code="runtime_dependency_missing")
+    caps = await caps_cache.get(u, client)
     if caps.paths is not None:
         if incoming_path not in caps.paths:
             return openai_error(404, f"Route not supported by upstream: {incoming_path}", code="route_not_found")
