@@ -32,7 +32,7 @@ def _public_health_details_enabled() -> bool:
 
 
 def _public_models_enabled() -> bool:
-    return _env_bool("API_PUBLIC_MODELS", False)
+    return _env_bool("API_PUBLIC_MODELS", True)
 
 
 async def _build_health_payload(request: Request, *, include_details: bool) -> dict:
