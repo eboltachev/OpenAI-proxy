@@ -31,10 +31,6 @@ def _public_health_details_enabled() -> bool:
     return _env_bool("API_PUBLIC_HEALTH_DETAILS", False)
 
 
-def _public_models_enabled() -> bool:
-    return _env_bool("API_PUBLIC_MODELS", True)
-
-
 async def _build_health_payload(request: Request, *, include_details: bool) -> dict:
     cfg = _cfg(request)
     by_upstream: dict[str, list[str]] = defaultdict(list)
@@ -100,18 +96,6 @@ async def health_internal(request: Request):
 
 @router.get("/v1/models")
 async def list_models(request: Request):
-    if not _public_models_enabled():
-        return openai_error(404, "Not found", code="not_found")
-    try:
-        cfg = _cfg(request)
-    except Exception as e:
-        return openai_error(500, f"Configuration error: {e}", code="config_error")
-    data = [{"id": model, "object": "model", "owned_by": "proxy"} for model in sorted(cfg.keys())]
-    return JSONResponse(content={"object": "list", "data": data})
-
-
-@router.get("/internal/models")
-async def list_models_internal(request: Request):
     try:
         cfg = _cfg(request)
     except Exception as e:
